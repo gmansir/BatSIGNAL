@@ -2,15 +2,13 @@ import configparser
 import matplotlib.pyplot as plt
 import scipy as sp
 from scipy import interpolate
+from tabulate import tabulate
 import numpy as np
 import time
 import corner
 import batman
 import emcee
-# from builtins import input
 import george
-# from more_itertools import unique_everseen
-# import io
 import pdb
 
 config = configparser.RawConfigParser()
@@ -66,6 +64,13 @@ def create_param_file(newfile=''):
     with open(newfile, 'wt') as configfile:
         # config.write(bytes(configfile, 'UTF-8'))
         config.write(configfile)
+
+
+def create_results_file(results, planet, newfile):
+
+    f = open(newfile, 'w')
+    f.write(tabulate(results, tablefmt="latex", floatfmt=".2f"))
+    f.close()
 
 
 def separate_limbdark(variables):
@@ -139,7 +144,7 @@ def run_batman(inputs, variables, names, date, change, usr_in):
                     if not i[1]:
                         inputs.u.insert(i[0], usr_in[i[0] + 1])
         elif inputs.limb_dark == 'quadratic' or inputs.limb_dark == 'squareroot' or inputs.limb_dark == 'logarithmic' or \
-                inputs.limb_dark == 'exponential' or inputs.limb_dark == 'power2':
+                        inputs.limb_dark == 'exponential' or inputs.limb_dark == 'power2':
             if len(inputs.u) != 2:
                 for i in enumerate(change[1]):
                     if not i[1]:
@@ -156,7 +161,7 @@ def lnprior(variables, sigma, error_nlvl, error_scale):
     Verifies that the new guesses for the parameters are within a reasonable (3sigma) range of the original guesses.
     Then determines a likelihood value related to how distant the new guesses are from the originals.
 
-    :param theta: theta[0] and theta[1] are variables for scaling the kernel for the gaussian process part. 
+    :param theta: theta[0] and theta[1] are variables for scaling the kernel for the gaussian process part.
                   theta[2:] are the new guesses for the parameters being fitting for each chain.
     :param variables: guesses of the user for the parameters.
     :param sigma: values of error from the user guesses in the input file.
@@ -192,10 +197,10 @@ def lnprior(variables, sigma, error_nlvl, error_scale):
                     val = -sp.inf
                 value.append(val)
             else:
-                for n in range(int(len(variables[i])/2)):
-                    if val != -sp.inf and variables[i][0+n*2] - 3 * sigma[i] < variables[i][1+n*2] < \
-                            variables[i][0+n*2] + 3 * sigma[i]:
-                        val = val - (variables[i][1+n*2] - variables[i][0+n*2]) ** 2 / (2 * (sigma[i] ** 2))
+                for n in range(int(len(variables[i]) / 2)):
+                    if val != -sp.inf and variables[i][0 + n * 2] - 3 * sigma[i] < variables[i][1 + n * 2] < \
+                                    variables[i][0 + n * 2] + 3 * sigma[i]:
+                        val = val - (variables[i][1 + n * 2] - variables[i][0 + n * 2]) ** 2 / (2 * (sigma[i] ** 2))
                     else:
                         val = -sp.inf
                     value.append(val)
@@ -231,7 +236,7 @@ def lnlike(variables, date_real, date, flux, error, ins, change, usr, dict, mult
     """
 
     val = 0.0
-    for i in range(len(dict.keys())+1):
+    for i in range(len(dict.keys()) + 1):
 
         if i == 0:
             pass
@@ -254,7 +259,7 @@ def lnlike(variables, date_real, date, flux, error, ins, change, usr, dict, mult
                     pass
                 elif multi[k][i] == 1:
                     names = np.append(names, k)
-                    if k =='u':
+                    if k == 'u':
                         if ins.limb_dark == 'nonlinear':
                             names = np.append(names, k)
                             names = np.append(names, k)
@@ -274,11 +279,11 @@ def lnlike(variables, date_real, date, flux, error, ins, change, usr, dict, mult
                             pass
 
                     else:
-                        v.append(variables[k][1+count[k]*2])
+                        v.append(variables[k][1 + count[k] * 2])
                     count[k] += 1
                 elif multi[k][i] == 2:
                     names = np.append(names, k)
-                    if k =='u':
+                    if k == 'u':
                         if ins.limb_dark == 'nonlinear':
                             names = np.append(names, k)
                             names = np.append(names, k)
@@ -297,7 +302,7 @@ def lnlike(variables, date_real, date, flux, error, ins, change, usr, dict, mult
                         else:
                             pass
                     else:
-                        v.append(variables[k][1+count[k]*2])
+                        v.append(variables[k][1 + count[k] * 2])
                 else:
                     raise ValueError('Please use only the following values for the multitransit section: 0 - You do not'
                                      'want to fit the parameter for that specific transit, 1 - You would like to fit the'
@@ -405,30 +410,6 @@ def show_chain(sampler, names):
     plt.show()
 
 
-def show_model(date, flux, model, stdv):
-    """
-    Plots the BATMAN model determined by BatSignal as the most likely fit to the data over the raw data
-
-    :param date: Time of observations, x axis
-    :param flux: Light collected from star, y axis
-    :param model: Final BATMAN model
-
-    :return: Saves figure as model.png in current working directory
-    """
-
-    low = model - stdv
-    high = model + stdv
-
-    plt.plot(date, model, c='#5d1591')
-    plt.fill_between(date, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
-    plt.plot(date, flux, 'o', c='#4bd8ce')
-    plt.title('BatSignal Output')
-    plt.xlabel('Julian Days')
-    plt.ylabel('Relative Flux')
-    plt.savefig("model.png")
-    plt.show()
-
-
 def show_corner(samples, variables, names):
     """
     Plots corner plot depicting the parameter space explored by the models
@@ -463,30 +444,6 @@ def normalize_flux(per, a, t0, date, flux):
 
     :return: Flux divided by the median of the transit's baseline
     """
-
-    # date = np.asarray(date)
-    # flux = np.asarray(flux)
-    #
-    # # Compute the transit duration
-    # transit_duration = (per / np.pi) * np.arcsin(1 / a)
-    #
-    # # Compute the half of the transit duration
-    # half_transit = transit_duration / 2
-    #
-    # # Make a boolean mask for the date array, is True for the transit duration
-    # mask_transit = (-half_transit <= date) & (date <= half_transit)
-    #
-    # # Make a boolean mask for the date array but now True is for the time without transit
-    # mask_no_transit = np.logical_not(mask_transit)
-    #
-    # # Get the flux point without transit
-    # flux_no_transit = flux[mask_no_transit]
-    #
-    # # Compute the median of the flux without transit
-    # median_flux = np.median(flux_no_transit)
-    #
-    # # Normalize the flux by the median of the no_transit flux
-    # norm_flux = flux/median_flux
 
     # Compute the mean value of flux
     mean_flux = np.mean(flux)
@@ -644,14 +601,13 @@ class BatSignal:
         self.model = list()
         self.results = list()
         self.variables = list()
-        self._steps_burn_in = 60 #600
-        self._steps_full = 180 #1800
+        self._steps_burn_in = 60  # 600
+        self._steps_full = 180  # 1800
         self._error_nlvl = [1., 5000.]
         self._error_scale = [1., 100.]
 
-
         # Reads in the user's guesses for the planet system parameters
-        config.read_file(open(self.input_param_file))
+        config.readfp(open(self.input_param_file))
         if planet == '':
             section = config.sections()[2]
         else:
@@ -687,7 +643,6 @@ class BatSignal:
     def update_relax(self, **kwargs):
         """
         Allows the user to update the relaxation factor for sigma of each parameter listed in keywords.
-
         :keyword: "rp" - ratio of the radii
         :keyword: "u"  - limb darkening coefficients
         :keyword: "t0" - time of mid transit
@@ -711,26 +666,25 @@ class BatSignal:
             if key == "rp":
                 self.relax[0] = value
             elif key == "u":
-                for i in range(count+1):
-                    self.relax[i+1] = value
+                for i in range(count + 1):
+                    self.relax[i + 1] = value
             elif key == "t0":
-                self.relax[count+2] = value
+                self.relax[count + 2] = value
             elif key == "per":
-                self.relax[count+3] = value
+                self.relax[count + 3] = value
             elif key == "a":
-                self.relax[count+4] = value
+                self.relax[count + 4] = value
             elif key == "inc":
-                self.relax[count+5] = value
+                self.relax[count + 5] = value
             elif key == "ecc":
-                self.relax[count+6] = value
+                self.relax[count + 6] = value
             elif key == "w":
-                self.relax[count+7] = value
+                self.relax[count + 7] = value
         print(self.relax)
 
     def bat(self, *args, **kwargs):
         """
         Runs fit for light curve model using MCMC and Gaussian Process Regression.
-
         :argument: quadratic    - quadratic mode for limb darkening (default)
         :argument: nonlinear    - nonlinear mode for limb darkening
         :argument: linear       - linear mode for limb darkening
@@ -741,12 +695,10 @@ class BatSignal:
         :argument: corner       - saves corner plot in pwd
         :argument: chain        - saves walker plot in pwd
         :argument: model        - saves plot of data and model in pwd
-
         :keyword: steps_burn_in - new value for number of MCMCs during burn-in phase
         :keyword: steps_full    - new value for number of MCMCs during full run
         :keyword: err_nlvl      - new value for error in amplitude for gaussian process regression
         :keyword: err_scale     - new value for error in scale for gaussian process regression
-
         :return: input_param_file - Name of file containing user's guesses for planet details
         :return: light_curve_file - Name of file containing light curve data
         :return: date             - Interpolated dates so that they have equal time intervals
@@ -830,7 +782,6 @@ class BatSignal:
             else:
                 pass
 
-
         # Initializes the model and uses the user's guesses to model the transit
         bats = batman.TransitModel(inputs, self.date)
         self.model = bats.light_curve(inputs)
@@ -848,7 +799,7 @@ class BatSignal:
         # Add values of the variables
         if self._dict is not None:
             initnames = ('amp', 'scale')
-            for i in range(len(self._dict.keys())+1):
+            for i in range(len(self._dict.keys()) + 1):
                 for n in self.names:
                     trust = self._multi[n][i]
                     if n == 't0':
@@ -890,7 +841,7 @@ class BatSignal:
                     for v in uniform:
                         idx = [i for i, x in enumerate(initnames) if x == v]
                         for m in idx:
-                            pos[i, m] = initial[m][1]  + scales[v]*sp.random.randn(1)
+                            pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
                 else:
                     idx = [i for i, x in enumerate(initnames) if x == uniform]
                     for m in idx:
@@ -901,7 +852,7 @@ class BatSignal:
                     for v in gaussian:
                         idx = [i for i, x in enumerate(initnames) if x == v]
                         for m in idx:
-                            pos[i, m]  = sp.random.normal(initial[m][1], scales[v])
+                            pos[i, m] = sp.random.normal(initial[m][1], scales[v])
                 else:
                     idx = [i for i, x in enumerate(initnames) if x == gaussian]
                     for m in idx:
@@ -943,9 +894,8 @@ class BatSignal:
         for i in range(len(initnames)):
             self.results[i] = [initnames[i], self._output[i][0], self._output[i][1], self._output[i][2]]
 
-
         if self._dict is not None:
-            for idx in range(len(self._dict.keys())+1):
+            for idx in range(len(self._dict.keys()) + 1):
 
                 if idx == 0:
                     date = self.date
@@ -959,10 +909,9 @@ class BatSignal:
                     flux = self._dict[key][1]
                     error = self._dict[key][2]
 
-
                 ms = list()
                 for n in samples[np.random.randint(len(samples), size=int(0.1 * len(samples)))]:
-                    #nlvl, scale = np.exp(n[:2])
+                    # nlvl, scale = np.exp(n[:2])
 
                     variables = {}
                     for i in range(len(initnames)):
@@ -987,10 +936,10 @@ class BatSignal:
                                         names = np.append(names, k)
                                         names = np.append(names, k)
                                         names = np.append(names, k)
-                                        v.append(variables[k][0 + count[k]*4])
-                                        v.append(variables[k][1 + count[k]*4])
-                                        v.append(variables[k][2 + count[k]*4])
-                                        v.append(variables[k][3 + count[k]*4])
+                                        v.append(variables[k][0 + count[k] * 4])
+                                        v.append(variables[k][1 + count[k] * 4])
+                                        v.append(variables[k][2 + count[k] * 4])
+                                        v.append(variables[k][3 + count[k] * 4])
                                     elif inputs.limb_dark == 'quadratic' or inputs.limb_dark == 'squareroot' or inputs.limb_dark == \
                                             'logarithmic' or inputs.limb_dark == 'exponential' or inputs.limb_dark == 'power2':
                                         names = np.append(names, k)
@@ -1080,20 +1029,7 @@ class BatSignal:
             self.model = avg
             self.stdv = stdv
 
-        if "model" in args:
-            if self._dict is not None:
-                for k in range(len(self._dict.keys()) + 1):
-
-                    if k == 0:
-                        show_model(self.date, self.flux, self.model, self.stdv)
-                    else:
-                        date = self._dict[key][3]
-                        flux = self._dict[key][1]
-                        model = self._dict[key][4]
-                        stdev = self._dict[key][5]
-                        show_model(date, flux, model, stdev)
-            else:
-                show_model(self.date, self.flux, self.model, self.stdv)
+        create_results_file(self.results, self.planet, (self.planet + '.out'))
 
         return self
 
@@ -1278,3 +1214,78 @@ class BatSignal:
         file.close()
 
         self.__init__(self.input_param_file, self.light_curve_file, self.planet)
+
+    def plot_model(self):
+
+            low = self.model - self.stdv
+            high = self.model + self.stdv
+            res = self.flux - self.model
+
+            fig, (plt1, plt2) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+            fig.subplots_adjust(hspace=0)
+
+            plt1.plot(self.date, self.model, c='#5d1591')
+            plt1.fill_between(self.date, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
+            plt1.plot(self.date, self.flux, 'o', c='#4bd8ce')
+
+            plt2.plot(self.date, res, 'o', c='#5d1591')
+            plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
+            yticks = plt2.yaxis.get_major_ticks()
+            yticks[-1].label1.set_visible(False)
+
+            fig.suptitle('BatSignal Output')
+            plt2.set_xlabel('Julian Days')
+            plt1.set_ylabel('Relative Flux')
+
+            plt.savefig("model.png")
+            plt.show()
+
+    def multi_model(self):
+
+        lrange = [(self.t0s[0] - self.date[0])]
+        hrange = [(self.date[-1] - self.t0s[0])]
+        leng = [len(self.date)]
+
+        for k in range(len(self._dict.keys()) + 1):
+            if k == 0:
+                pass
+            else:
+                key = 'data' + str(k)
+                d = self._dict[key][3]
+                leng.append(len(d))
+                lrange.append(self.t0s[k] - d[0])
+                hrange.append(d[-1] - self.t0s[0])
+
+        minphase = np.max(lrange)
+        maxphase = np.max(hrange)
+        maxleng = np.max(leng)
+
+        phase = np.linspace(minphase, maxphase, maxleng * 2)
+        c = (np.abs(phase - 0.0)).argmin()
+
+        dates = [np.linspace(self.date[0], self.date[-1], maxleng)]
+        fluxes = [interpolate.splrep(dates[0], self.flux)]
+        models = [interpolate.splrep(dates[0], self.model)]
+        reses = [fluxes[0] - model[0]]
+
+        for k in range(len(self._dict.keys()) + 1):
+            if k != 0:
+                key = 'data' + str(k)
+                date = self._dict[key][3]
+                shift = self.t0s[k] - self.t0s[0]
+                new = np.linspace((self.date + shift)[0], (self.date + shift)[-1], maxleng)
+                dates = np.c_[dates, new]
+                f = interpolate.splrep(new, self._dict[key][1])
+                fluxes = np.c_[fluxes, f]
+                m = interpolate.splrep(new, self._dict[key][4])
+                models = np.c_[models, m]
+                reses = np.c_[reses, (f - m)]
+
+        fig, (plt1, plt2) = plt.subplots(1, 2, gridspec_kw={'width_ratios': [3, 1]})
+
+        plt1.stackplot(dates, fluxes, colors=('#4bd8ce'))
+        plt1.stackplot(dates, models, colors=('#5d1591'))
+        plt2.stackplot(dates, reses, colors=('#5d1591'))
+
+        plt.show()
+
