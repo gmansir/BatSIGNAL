@@ -601,8 +601,8 @@ class BatSignal:
         self.model = list()
         self.results = list()
         self.variables = list()
-        self._steps_burn_in = 60 #600
-        self._steps_full = 180 #1800
+        self._steps_burn_in = 600
+        self._steps_full = 1800
         self._error_nlvl = [1., 5000.]
         self._error_scale = [1., 100.]
 
