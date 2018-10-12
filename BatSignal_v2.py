@@ -601,8 +601,8 @@ class BatSignal:
         self.model = list()
         self.results = list()
         self.variables = list()
-        self._steps_burn_in = 600
-        self._steps_full = 1800
+        self._steps_burn_in = 600 #600
+        self._steps_full = 1800 #1800
         self._error_nlvl = [1., 5000.]
         self._error_scale = [1., 100.]
 
@@ -793,7 +793,6 @@ class BatSignal:
         self.model = bats.light_curve(inputs)
 
         # Determines the number of walkers to use and number of variables to fit
-        nwalkers = 50  # 24 before
         ndim = len(self.variables)
 
         self._usr_err_relax = multiply_one_one(self._usr_err, self.relax)
@@ -847,6 +846,8 @@ class BatSignal:
 
         initial = zip(initnames, initial)
 
+        nwalkers = len(initnames)*10
+
         pos = np.zeros([nwalkers, len(initnames)])
         scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 't0', 'ecc', 'w'], 1e-2)
         scales['u'] = 1e-3
@@ -857,6 +858,21 @@ class BatSignal:
                     pos[i, j[0]] = initial[j[0]][1] + scales[j[1]] * sp.random.randn(1)
                 else:
                     pos[i, j[0]] = sp.random.normal(initial[j[0]][1], scales[j[1]])
+
+            if 'noprior' in locals():
+                scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 't0', 'ecc', 'w'], 1.)
+                scales['u'] = 1e-2
+                scales['inc'] = 10.
+                if isinstance(noprior, (list, tuple)):
+                    for v in noprior:
+                        idx = [i for i, x in enumerate(initnames) if x == v]
+                        for m in idx:
+                            pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
+                else:
+                    idx = [i for i, x in enumerate(initnames) if x == noprior]
+                    for m in idx:
+                        pos[i, m] = initial[m][1] + scales[uniform] * sp.random.randn(1)
+
 
             if 'uniform' in locals():
                 if isinstance(uniform, (list, tuple)):
@@ -1073,10 +1089,11 @@ class BatSignal:
         :return: Synthetic light curve saved in a file called "testcurve.txt" in pwd
         """
 
+
         inputs.rp = self._usr_in[0]
         inputs.limb_dark = "quadratic"
         inputs.u = self._usr_in[1]
-        inputs.t0 = self._usr_in[2]
+        inputs.t0 = np.median(self.date)
         inputs.per = self._usr_in[3]
         inputs.a = self._usr_in[4]
         inputs.inc = self._usr_in[5]
@@ -1095,28 +1112,35 @@ class BatSignal:
                     percent = [kwargs[k]]
         else:
             # percent = [0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06]
-            percent = [0.01, 0.03, 0.05, 0.07, 0.09, 0.11, 0.13, 0.15, 0.17, 0.19, 0.21]
+            percent = [0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 1.05]
+
+#        count = 0
+#        for i in percent:
+#            count += 1
+#            sigma = i * diff
+#            noise = sigma * sp.random.standard_normal(len(self.date))
+
+#            if "fourier" in args:
+#                for n in range(len(noise)):
+#                    if -0.018 >= noise[n] or noise[n] >= 0.018:
+#                        noise[n] = i
+#                red = 8 * np.fft.fft(noise) ** 2
+#                model += noise + red.real
+#                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise + red.real))
+#            elif "sine" in args:
+#                red = np.sin(2 * np.pi * self.date * 3 / max(self.date))
+#                model += noise + red
+#                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise + red))
+#            else:
+#                model += noise
+#                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise))
 
         count = 0
-        for i in percent:
-            count += 1
-            sigma = i * diff
-            noise = sigma * sp.random.standard_normal(len(self.date))
-
-            if "fourier" in args:
-                for n in range(len(noise)):
-                    if -0.018 >= noise[n] or noise[n] >= 0.018:
-                        noise[n] = i
-                red = 8 * np.fft.fft(noise) ** 2
-                model += noise + red.real
-                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise + red.real))
-            elif "sine" in args:
-                red = np.sin(2 * np.pi * self.date * 3 / max(self.date))
-                model += noise + red
-                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise + red))
-            else:
-                model += noise
-                sp.savetxt('SynthCurve' + str(i)[2:] + '.txt', zip(self.date, model, noise))
+        res = self.flux - self.model
+        for i,p in enumerate(percent):
+            count +=1
+            model += res*p
+            sp.savetxt('ResCurve' + str(i) + '.txt', zip(self.date, model, res*p))
 
         self.model = model
 
@@ -1282,6 +1306,12 @@ class BatSignal:
                     _ = ax[0][0].fill_between(self.date, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
                     _ = ax[0][0].plot(self.date, self.flux, 'o', c='#4bd8ce')
                     _ = ax[0][1].plot(self.date, res, 'o', c='#5d1591')
+                    ax[0][0].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[0][0].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
+                    ax[0][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[0][1].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
                 else:
                     key = 'data' + str(i)
                     shift = self.t0s[i] - self.t0s[0]
@@ -1294,6 +1324,12 @@ class BatSignal:
                     _ = ax[i][0].fill_between(self._dict[key][0] + shift, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
                     _ = ax[i][0].plot(self._dict[key][0] + shift, self._dict[key][1], 'o', c='#4bd8ce')
                     _ = ax[i][1].plot(self._dict[key][0] + shift, self._dict[key][1] - self._dict[key][4], 'o', c='#5d1591')
+                    ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[i][0].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
+                    ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[i][1].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
 
             plt.savefig(self.planet + "_model.png")
             plt.show()
