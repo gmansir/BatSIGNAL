@@ -11,6 +11,7 @@ import emcee
 import george
 import pdb
 import h5py
+import os
 from tqdm import tqdm
 
 config = configparser.RawConfigParser()
@@ -391,7 +392,7 @@ def normalize_flux(flux):
     return norm_flux
 
 
-def compute_tzero(date, per, t0):
+def compute_tzero(date, flux, t0):
     """
     Computes the time of mid transit for secondary transits from the value given for the primary and the period of the
     orbit.
@@ -402,10 +403,28 @@ def compute_tzero(date, per, t0):
     :return: Time of mid transit for a secondary transit
     """
 
-    medtime = np.median(date)
-    number_transit_fraction = ((medtime - t0) / per) + 0.5
-    number_transit = int(number_transit_fraction)
-    t0_new = t0 + (per * number_transit)
+    #medtime = np.median(date)
+    #number_transit_fraction = ((medtime - t0) / per) + 0.5
+    #number_transit = int(number_transit_fraction)
+    #t0_new = t0 + (per * number_transit)
+
+    _, redate = np.histogram(date, bins=int(len(date)*0.05))
+    reflux = np.interp(redate, date, flux)
+    idx = np.argmin(reflux)
+
+    list = date.tolist()
+    low = min(date, key=lambda x: np.abs(x - redate[idx - 1]))
+    low = list.index(low)
+    high = min(date, key=lambda x: np.abs(x - redate[idx + 1]))
+    high = list.index(high)
+    zoom = date[low:high]
+
+    _, redate = np.histogram(zoom, bins=int(len(zoom)*0.15))
+    reflux = np.interp(redate, date, flux)
+    idx = np.argmin(reflux)
+
+    t0_new = redate[idx]
+
 
     return t0_new
 
@@ -576,6 +595,8 @@ class BatSignal:
         self._output = None
         self.model = None
         self.stdv = None
+        self._bat_model = None
+        self._inputs = None
 
     def update_relax(self, **kwargs):
         """
@@ -658,22 +679,27 @@ class BatSignal:
         model_inputs.rp = self._usr_in[0]
         model_inputs.limb_dark = "quadratic"
         model_inputs.u = self._usr_in[1]
-        model_inputs.t0 = self._usr_in[2]
         model_inputs.per = self._usr_in[3]
         model_inputs.a = self._usr_in[4]
         model_inputs.inc = self._usr_in[5]
         model_inputs.ecc = self._usr_in[6]
         model_inputs.w = self._usr_in[7]
 
+        if isinstance(self._usr_in[2], float):
+            model_inputs.t0 = self._usr_in[2]
+        else:
+            model_inputs.t0 = self._usr_in[2][0]
+
         # Computes the t0 for the current transit
         if self._dict is not None:
-            self.t0s = [compute_tzero(self.date, model_inputs.per, model_inputs.t0)]
-            for k in sorted(self._dict.keys()):
-                day = self._dict[k][0]
-                self.t0s.append(compute_tzero(day, model_inputs.per, model_inputs.t0))
-
-        model_inputs.t0 = compute_tzero(self.date, model_inputs.per, model_inputs.t0)
-        self._usr_in[2] = compute_tzero(self.date, self._usr_in[3], self._usr_in[2])
+            self.t0s = [self._usr_in[2]]
+            if isinstance(self._usr_in[2], float):
+                for k in sorted(self._dict.keys()):
+                    day = self._dict[k][0]
+                    light = self._dict[k][1]
+                    self.t0s.append(compute_tzero(day, light, model_inputs.t0))
+            else:
+                self.t0s = self._usr_in[2]
 
         # Normalize flux
         self.flux = normalize_flux(self.flux)
@@ -794,7 +820,8 @@ class BatSignal:
                     pos[i, j[0]] = sp.random.normal(initial[j[0]][1], scales[j[1]])
 
             if 'noprior' in locals():
-                scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 't0', 'ecc', 'w'], 1.)
+                scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 'ecc', 'w'], 1.)
+                scales['t0'] = 0.1
                 scales['u'] = 1e-2
                 scales['inc'] = 10.
                 if isinstance(noprior, (list, tuple)):
@@ -805,7 +832,7 @@ class BatSignal:
                 else:
                     idx = [i for i, x in enumerate(initnames) if x == noprior]
                     for m in idx:
-                        pos[i, m] = initial[m][1] + scales[uniform] * sp.random.randn(1)
+                        pos[i, m] = initial[m][1] + scales[noprior] * sp.random.randn(1)
 
             if 'uniform' in locals():
                 if isinstance(uniform, (list, tuple)):
@@ -1029,10 +1056,15 @@ class BatSignal:
             stdv = np.array(stdv)
 
             self.model = avg
+            mid = int(len(self.model)/2)
+            self._bat_model = model+(self.model[mid]-model[mid])
             self.stdv = stdv
             self._sampler = sampler
+            self._inputs = model_inputs
 
         create_results_file(self.results, (self.planet + '.out'))
+        os.remove(filename)
+
 
         return self
 
@@ -1062,14 +1094,14 @@ class BatSignal:
         bats = batman.TransitModel(inputs, self.date)
         model = bats.light_curve(inputs)
 
-        sigma = 0.0008
+        sigma = 0.0028
         N = len(self.date)
         if N%2 != 0:
             M = N + 1
         else:
             M = N
 
-        for i in range(100):
+        for i in range(400):
             noise = sigma * sp.random.standard_normal(M)
             red = np.fft.fft(noise)
 
@@ -1083,17 +1115,7 @@ class BatSignal:
 
             noise_model = model + noise + red
 
-            sp.savetxt('RPTest/rptest' + str(i) + '.txt', zip(self.date, noise_model, noise + red))
-
-
-        #count = 0
-        #res = self.flux - self.model
-        #for i, p in enumerate(percent):
-        #    count += 1
-        #    model += res * p
-        #    sp.savetxt('ResCurve' + str(i) + '.txt', zip(self.date, model, res * p))
-
-        #self.model = model
+            sp.savetxt('2rptest' + str(i) + '.txt', zip(self.date, noise_model, noise + red))
 
         return self
 
@@ -1227,9 +1249,10 @@ class BatSignal:
             fig, (plt1, plt2) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [3, 1]})
             fig.subplots_adjust(hspace=0)
 
+            plt1.plot(self.date, self.flux, 'o', c='#4bd8ce', alpha=0.5)
             plt1.plot(self.date, self.model, c='#5d1591')
-            plt1.fill_between(self.date, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
-            plt1.plot(self.date, self.flux, 'o', c='#4bd8ce')
+            plt1.fill_between(self.date, high, low, alpha=0.4, edgecolor='#7619b8', facecolor='#ae64e3')
+            plt1.plot(self.date, self._bat_model, c='#ff5ef9')
 
             plt2.plot(self.date, res, 'o', c='#5d1591')
             plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
@@ -1253,9 +1276,9 @@ class BatSignal:
                     high = self.model + self.stdv
                     res = self.flux - self.model
 
+                    _ = ax[0][0].plot(self.date, self.flux, 'o', c='#4bd8ce', alpha=0.5)
                     _ = ax[0][0].plot(self.date, self.model, c='#5d1591')
-                    _ = ax[0][0].fill_between(self.date, high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
-                    _ = ax[0][0].plot(self.date, self.flux, 'o', c='#4bd8ce')
+                    _ = ax[0][0].fill_between(self.date, high, low, alpha=0.4, edgecolor='#7619b8', facecolor='#ae64e3')
                     _ = ax[0][1].plot(self.date, res, 'o', c='#5d1591')
                     ax[0][0].yaxis.set_major_locator(plt.MaxNLocator(5))
                     yticks = ax[0][0].yaxis.get_major_ticks()
@@ -1270,10 +1293,10 @@ class BatSignal:
                     high = self._dict[key][4] - self._dict[key][5]
                     res = self._dict[key][1] - self._dict[key][4]
 
+                    _ = ax[i][0].plot(self._dict[key][0] + shift, self._dict[key][1], 'o', c='#4bd8ce', alpha=0.5)
                     _ = ax[i][0].plot(self._dict[key][0] + shift, self._dict[key][4], c='#5d1591')
-                    _ = ax[i][0].fill_between(self._dict[key][0] + shift, high, low, alpha=0.3, edgecolor='#7619b8',
+                    _ = ax[i][0].fill_between(self._dict[key][0] + shift, high, low, alpha=0.4, edgecolor='#7619b8',
                                               facecolor='#ae64e3')
-                    _ = ax[i][0].plot(self._dict[key][0] + shift, self._dict[key][1], 'o', c='#4bd8ce')
                     _ = ax[i][1].plot(self._dict[key][0] + shift, res, 'o', c='#5d1591')
                     ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
                     yticks = ax[i][0].yaxis.get_major_ticks()
