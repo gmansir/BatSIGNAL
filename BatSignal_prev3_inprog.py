@@ -10,6 +10,8 @@ import emcee
 import george
 from tabulate import tabulate
 from tqdm import tqdm
+import pdb
+from itertools import chain
 
 config = configparser.RawConfigParser()
 inputs = batman.TransitParams()
@@ -82,16 +84,18 @@ def separate_limbdark(variables):
     :return: List of variables without the nested array.
     """
 
-    ld = variables.pop(1)
-    try:
-        length = len(ld)
-        for i in range(length):
-            variables.insert(i + 1, ld[i])
-    except TypeError:
-        length = 1
-        variables.insert(1, ld)
+    for i,v in enumerate(variables):
+        try:
+            length = len(v)
+        except TypeError:
+             variables[i] = [v]
 
-    return variables, length
+    new = list(chain.from_iterable(variables))
+
+    if 'length' not in locals():
+        length = 0
+
+    return new, length
 
 
 def together_limbdark(variables, length):
@@ -114,7 +118,7 @@ def together_limbdark(variables, length):
     return variables
 
 
-def run_batman(vardict, date):
+def run_batman(variables, date, names):
 
     batinputs = batman.TransitParams()
 
@@ -138,30 +142,34 @@ def lnprior(variables, sigmas):
     """
 
     value = list()
-    for i in variables.keys():
 
-        val = 0.0
-        if i == 'amp' or i == 'scale':
-            if val != -sp.inf and sp.log(sigmas[i][0]) < variables[i][1] < sp.log(sigmas[i][1]):
-                val = val - (variables[i][1] - variables[i][0]) ** 2 / 2 * 0.3 * sp.log(sigmas[i][1])
-            else:
-                val = -sp.inf
-            value.append(val)
+    for key in variables.keys():
+        if key == 'usr':
+            pass
         else:
-            if len(variables[i]) == 2:
-                if val != -sp.inf and variables[i][0] - 3 * sigmas[i] < variables[i][1] < variables[i][0] + 3 * sigmas[i]:
-                    val = val - (variables[i][1] - variables[i][0]) ** 2 / (2 * (sigmas[i] ** 2))
-                else:
-                    val = -sp.inf
-                value.append(val)
-            else:
-                for n in range(int(len(variables[i]) / 2)):
-                    if val != -sp.inf and variables[i][0 + n * 2] - 3 * sigmas[i] < variables[i][1 + n * 2] < \
-                                    variables[i][0 + n * 2] + 3 * sigmas[i]:
-                        val = val - (variables[i][1 + n * 2] - variables[i][0 + n * 2]) ** 2 / (2 * (sigmas[i] ** 2))
+            for i,s in enumerate(sigmas):
+                val = 0.0
+                if s[0] == 'amp' or s[0] == 'scale':
+                    if val != -sp.inf and sp.log(s[1][0]) < variables[key][i] < sp.log(s[1][1]):
+                        val = val - (variables[key][i] - variables['usr'][i]) ** 2 / 2 * 0.3 * sp.log(s[1][1])
                     else:
                         val = -sp.inf
                     value.append(val)
+                else:
+                    if isinstance(s[1], float):
+                        if val != -sp.inf and variables['usr'][i] - 3 * s[1] < variables[key][i] < variables['usr'][i] + 3 * s[1]:
+                            val = val - (variables[key][i] - variables['usr'][i]) ** 2 / (2 * (s[1] ** 2))
+                        else:
+                            val = -sp.inf
+                        value.append(val)
+                    else:
+                        for n in range(len(s[1])):
+                            if val != -sp.inf and variables['usr'][i][n] - 3 * s[1][n] < variables[key][i][n] < \
+                                            variables['usr'][i][n] + 3 * s[1][n]:
+                                val = val - (variables[key][i][n] - variables['usr'][i][n]) ** 2 / (2 * (s[1][n] ** 2))
+                            else:
+                                val = -sp.inf
+                            value.append(val)
 
     val = 0.0
     for i in value:
@@ -173,7 +181,7 @@ def lnprior(variables, sigmas):
     return val
 
 
-def lnlike(variables, ins, change, datadict, multi):
+def lnlike(variables, datadict, names):
     """
     Changes the inputs for batman to the new guesses. Computes a new model for the light curve and uses Gaussian
     Process Regression to determine the likelihood of the model as a whole.
@@ -201,74 +209,12 @@ def lnlike(variables, ins, change, datadict, multi):
         flux = datadict[key][1]
         error = datadict[key][2]
 
-        names = []
-        v = []
-        count = datadict.fromkeys(multi.keys(), 0)
-
-        for k in sorted(variables.keys()):
-            if k == 'amp' or k == 'scale':
-                pass
-            else:
-                if multi[k][i] == 0:
-                    pass
-                elif multi[k][i] == 1:
-                    names = np.append(names, k)
-                    if k == 'u':
-                        if ins.limb_dark == 'nonlinear':
-                            names = np.append(names, k)
-                            names = np.append(names, k)
-                            names = np.append(names, k)
-                            v.append(variables[k][1 + count[k] * 8])
-                            v.append(variables[k][3 + count[k] * 8])
-                            v.append(variables[k][5 + count[k] * 8])
-                            v.append(variables[k][7 + count[k] * 8])
-                        elif ins.limb_dark == 'quadratic' or ins.limb_dark == 'squareroot' or ins.limb_dark == \
-                                'logarithmic' or ins.limb_dark == 'exponential' or ins.limb_dark == 'power2':
-                            names = np.append(names, k)
-                            v.append(variables[k][1 + count[k] * 4])
-                            v.append(variables[k][3 + count[k] * 4])
-                        elif ins.limb_dark == 'linear':
-                            v.append(variables[k][1 + count[k] * 2])
-                        else:
-                            pass
-
-                    else:
-                        v.append(variables[k][1 + count[k] * 2])
-                    count[k] += 1
-                elif multi[k][i] == 2:
-                    names = np.append(names, k)
-                    if k == 'u':
-                        if ins.limb_dark == 'nonlinear':
-                            names = np.append(names, k)
-                            names = np.append(names, k)
-                            names = np.append(names, k)
-                            v.append(variables[k][1 + count[k] * 8])
-                            v.append(variables[k][3 + count[k] * 8])
-                            v.append(variables[k][5 + count[k] * 8])
-                            v.append(variables[k][7 + count[k] * 8])
-                        elif ins.limb_dark == 'quadratic' or ins.limb_dark == 'squareroot' or ins.limb_dark == \
-                                'logarithmic' or ins.limb_dark == 'exponential' or ins.limb_dark == 'power2':
-                            names = np.append(names, k)
-                            v.append(variables[k][1 + count[k] * 4])
-                            v.append(variables[k][3 + count[k] * 4])
-                        elif ins.limbdark == 'linear':
-                            v.append(variables[k][1 + count[k] * 2])
-                        else:
-                            pass
-                    else:
-                        v.append(variables[k][1 + count[k] * 2])
-                else:
-                    raise ValueError('Please use only the following values for the multitransit section: 0 - You do not'
-                                     'want to fit the parameter for that specific transit, 1 - You would like to fit'
-                                     'the parameter independantly from the other transits, or 2 - You would like to'
-                                     'force the parameter to be the same as another transit as the parameter is fit.')
-
-        model = run_batman(vardict[key], date)
+        model = run_batman(variables[key][2:], date, names)
 
         tck = interpolate.splrep(date, model, s=0)
         model_real_times = interpolate.splev(date_real, tck, der=0)
 
-        kernel = variables['amp'][1] * george.kernels.Matern52Kernel(variables['scale'][1])
+        kernel = variables[key][0] * george.kernels.Matern52Kernel(variables[key][1])
         gp = george.GP(kernel)
         gp.compute(date_real, error)
 
@@ -302,18 +248,26 @@ def lnprob(theta, datadict, variables, sigmas, multi):
         minimized over time.
     """
 
-    v = zip(*variables)
-    variables = {}
-    for i in range(len(v[0])):
-        try:
-            variables[v[0][i]].append(v[1][i])
-            variables[v[0][i]].append(theta[i])
-        except KeyError:
-            variables[v[0][i]] = [v[1][i], theta[i]]
+    ld = [variables.pop(-1)]
+    ld.append(variables.pop(-1))
 
-    ln_prior = lnprior(variables, sigmas)
+    vardict = {x:variables for x in datadict.keys()}
+    usr = variables
+    for key in vardict.keys():
+        for i in range(len(variables)-2):
+            if multi[key][i] is not np.nan and i ==1:
+                for n in range(ld[0]):
+                    vardict[key][i+2][n] = theta[multi[key][i]+n]
+            elif multi[key][i] is not np.nan:
+                vardict[key][i+2] = theta[multi[key][i]]
+            else:
+                pass
+    vardict['usr'] = usr
+
+    ln_prior = lnprior(vardict, sigmas)
+
     if sp.isfinite(ln_prior):
-        ln_like = lnlike(variables, ins, change, datadict, multi)
+        ln_like = lnlike(vardict, datadict, sigmas.keys())
         return ln_prior + ln_like
     else:
         return -sp.inf
@@ -504,8 +458,8 @@ class BatSignal:
 
         # Relax is a multiplication factor for sigma in each value, it can be modified by the user with the
         # update_relax method
-        sigma, self._ldlength = separate_limbdark(self._usr_err[2:])
-        self.relax = np.ones(len(sigma))
+        self._usr_err, self._ldlength = separate_limbdark(self._usr_err)
+        self.relax = np.ones(len(self._usr_err)).tolist()
 
         #Initializes the input structure for the batman transit model
         self._inputs = batman.TransitParams()
@@ -520,24 +474,24 @@ class BatSignal:
 
         #Determines the time of mid transit for all transits and sets the input parameter for batman as the value for
         #the first transit, with all values in a separate list.
+        self.t0s = {}
         if isinstance(self._usr_in[2], float):
             if 0.99 < (self._usr_in[2] / np.median(self._datadict['transit0'][0])) < 1.01:
                 if len(self._datadict.keys()) == 1:
                     self._inputs.t0 = self._usr_in[2]
-                    self.t0s = [self._usr_in[2]]
+                    self.t0s[self._datadict.keys()[0]] = self._usr_in[2]
                 else:
-                    self.t0s = [self._usr_in[2]]
+                    self.t0s['transit0'] = self._usr_in[2]
                     for key in sorted(self._datadict.keys()):
                         if key != 'transit0':
-                            self.t0s.append(compute_tzero(self._datadict[key][0], self._datadict[key][1]))
-                    self._inputs.t0 = self.t0s[0]
+                            self.t0s[key] = compute_tzero(self._datadict[key][0], self._datadict[key][1])
+                    self._inputs.t0 = self.t0s['transit0']
             else:
-                self.t0s = []
                 for key in sorted(self._datadict.keys()):
-                    self.t0s.append(compute_tzero(self._datadict[key][0], self._datadict[key][1]))
-                self._inputs.t0 = self.t0s[0]
+                    self.t0s[key] = compute_tzero(self._datadict[key][0], self._datadict[key][1])
+                self._inputs.t0 = self.t0s['transit0']
         else:
-            self.t0s = self._usr_in[2]
+            self.t0s['transit0'] = self._usr_in[2]
             self._inputs.t0 = self._usr_in[2][0]
 
         # Determines which parameters the user would like to fit
@@ -547,15 +501,26 @@ class BatSignal:
 
         # Determines the number of limb-darkening coefficients for the law requested if quadratic wasn't used
         self.names_change = [self.all_param_names[i] for i in change_arr]
-        if self._usr_change[1] == True:
-            if self.limb_dark_law == 'linear' or self.limb_dark_law =='uniform':
-                pass
-            elif self.limb_dark_law == 'nonlinear':
-                    self.names_change.insert(1, np.repeat('u', 3))
-            else:
-                self.names_change.insert(1, 'u')
         self.names_change.insert(0, 'amp')
         self.names_change.insert(1, 'scale')
+
+        #Creates an array of the varibales to be fit
+        self.variables = [self._usr_in[i] for i in change_arr]
+        #self.relax = together_limbdark(self.relax, self._ldlength)
+        #self.relax = [self.relax[i] for i in change_arr]
+        #self.relax, _ = separate_limbdark(self.relax)
+
+        # Updates the sigma array to contain only values for the parameters to be fit, along with the addition of the
+        # amplitude and scale values for the gp kernel
+        #self._usr_err = together_limbdark(self._usr_err, self._ldlength)
+        #self._usr_err = [self._usr_err[i] for i in change_arr]
+        self._usr_err.insert(0, [1., 5000.])
+        self._usr_err.insert(1, [1., 100.])
+
+        # Determines the number of walkers to use and number of variables to fit
+        self.variables.insert(0, 0.06)
+        self.variables.insert(1, 0.8)
+        self.init = dict(zip(self.names_change, self.variables))
 
         #Creates a dictionary for which transit parameters should be fit independanly or simultaneously in the case
         #of multiple transits
@@ -563,53 +528,72 @@ class BatSignal:
         multi = [eval(i) for i in (sp.array(config.items(section))[:, 1]).tolist()]
         self._multi = dict(zip(self.all_param_names, multi))
 
+        #Reformats the multi dictionary and creates the list of variables to be fit for
         lcs = sorted(self._datadict.keys())
         self._multi_lc = dict.fromkeys(lcs)
-        pos = dict(zip(set(self.names_change), np.zeros(len(set(self.names_change)))))
+        pos = dict(zip(self.names_change, np.ones(len(self.names_change))))
+        self.initnames = ['amp', 'scale']
+        self.initial = [0.06, 0.8]
+        count = 2
         for n in self.all_param_names[:-1]:
             if n not in pos.keys():
-                pos[n] = np.nan
+                pos[n] = 0
         for lc in lcs:
             self._multi_lc[lc] = []
             for i,n in enumerate(self.all_param_names[:-1]):
                 if self._multi[n][lcs.index(lc)] == 0:
                     self._multi_lc[lc].append(np.nan)
-                elif self._multi[n][lcs.index(lc)] == 1 and pos[n] != np.nan:
-                        self._multi_lc[lc].append(pos[n])
-                        pos[n] += len(set(self.names_change))-2
-                elif pos[n] != np.nan:
+                elif self._multi[n][lcs.index(lc)] == 1 and pos[n] != 0:
+                        self._multi_lc[lc].append(count)
+                        if n == 'u':
+                            for l in range(self._ldlength):
+                                self.initnames.append(n)
+                            count += self._ldlength-1
+                        else:
+                            self.initnames.append(n)
+                        if n == 't0':
+                            self.initial.append(self.t0s[lc])
+                        else:
+                            self.initial.append(self.init[n])
+                        count += 1
+                elif pos[n] != 0:
                     group = 'pos' + str(self._multi[n][lcs.index(lc)])
                     try:
                         self._multi_lc[lc].append(locals()[group][n])
                     except KeyError:
-                        self._multi_lc[lc].append(pos[n])
+                        self._multi_lc[lc].append(count)
                         try:
-                            locals()[group][n] = pos[n]
-                            pos[n] += len(set(self.names_change)) - 2
+                            locals()[group][n] = count
+                            if n == 'u':
+                                for l in range(self._ldlength):
+                                    self.initnames.append(n)
+                                count += self._ldlength - 1
+                            else:
+                                self.initnames.append(n)
+                            if n == 't0':
+                                self.initial.append(self.t0s[lc])
+                            else:
+                                self.initial.append(self.init[n])
+                            count += 1
                         except KeyError:
                             locals()[group] = dict()
-                            locals()[group][n] = pos[n]
-                            pos[n] += len(set(self.names_change)) - 2
+                            locals()[group][n] = count
+                            if n == 'u':
+                                for l in range(self._ldlength):
+                                    self.initnames.append(n)
+                                count += self._ldlength - 1
+                            else:
+                                self.initnames.append(n)
+                            if n == 't0':
+                                self.initial.append(self.t0s[lc])
+                            else:
+                                self.initial.append(self.init[n])
+                            count += 1
                 else:
-                    pass
+                    self._multi_lc[lc].append(np.nan)
 
-            idxs = np.arange(len(self._multi_lc[lc]))
-            for i,test in enumerate(self._usr_change):
-                if test == False:
-                    idxs[i] = 0
+        self.initial, _ = separate_limbdark(self.initial)
 
-            self._multi_lc[lc] += idxs
-
-        #Creates an array of the varibales to be fit
-        self._usr_in, _ = separate_limbdark(self._usr_in)
-        self.variables = [self._usr_in[i] for i in change_arr]
-        self.relax = [self.relax[i] for i in change_arr]
-
-        #Updates the sigma array to contain only values for the parameters to be fit, along with the addition of the
-        #amplitude and scale values for the gp kernel
-        self._usr_err = [self._usr_err[i] for i in change_arr]
-        self._usr_err.insert(0, [1., 5000.])
-        self._usr_err.insert(1, [1., 100.])
 
         #Normalizes the flux for all transits
         for key in sorted(self._datadict.keys()):
@@ -681,61 +665,26 @@ class BatSignal:
                 pass
 
         #Creates a dictionary of sigma values including any updates to the relaxation parameter.
-        self.sigmas = dict(zip(self.names_change[0:2], self._usr_err[0:2]))
+        sigmas = []
         for i,r in enumerate(self.relax):
-            self.sigmas[self.names_change[i+2]] = self._usr_err[i+2]*r
+            sigmas.append(self._usr_err[i+2]*r)
+        sigmas = together_limbdark(sigmas, self._ldlength)
+        self.sigmas = zip(self.all_param_names[:-1], sigmas)
+        self.sigmas.insert(0, (self.names_change[0], self._usr_err[0]))
+        self.sigmas.insert(1, (self.names_change[1], self._usr_err[1]))
 
-        # Determines the number of walkers to use and number of variables to fit
+        initial = zip(self.initnames, self.initial)
+        nwalkers = len(self.initnames) * 10
+
+        self.variables, _ = separate_limbdark(self.variables)
         ndim = len(self.variables)
 
-        # Initial values for nlvl and scale
-        initial = np.array([0.06, 0.8])
-
-        # Add values of the variables
-        initnames = ('amp', 'scale')
-        for i in range(len(self._datadict.keys())):
-            nums = None
-            for n in self.names_change[2:]:
-                trust = self._multi[n][i]
-                if n == 't0':
-                    variable = self.t0s[i]
-                if n == 'u':
-                    if nums is not None:
-                        pass
-                    else:
-                        nums = [x for x, y in enumerate(self.names_change) if y == 'u']
-                        variable = [self.variables[x] for x in nums]
-                elif n != 't0' and n != 'u':
-                    variable = self.variables[self.names_change.index(n)]
-                if trust == 1:
-                    initial = np.append(initial, variable)
-                    initnames = np.append(initnames, n)
-                elif trust == 2:
-                    if n == 'u':
-                        check = [x for x, y in enumerate(initnames) if y == 'u']
-                        if len(check) >= len(variable):
-                            pass
-                        else:
-                            for v in variable:
-                                initial = np.append(initial, v)
-                                initnames = np.append(initnames, n)
-                    if n in initnames:
-                        pass
-                    else:
-                        initial = np.append(initial, variable)
-                        initnames = np.append(initnames, n)
-                else:
-                    pass
-
-        initial = zip(initnames, initial)
-        nwalkers = len(initnames) * 10
-
-        pos = np.zeros([nwalkers, len(initnames)])
+        pos = np.zeros([nwalkers, len(self.initnames)])
         scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 't0', 'ecc', 'w'], 1e-2)
         scales['u'] = 1e-3
         scales['inc'] = 5.
         for i in range(nwalkers):
-            for j in enumerate(initnames):
+            for j in enumerate(self.initnames):
                 if j[1] == 'amp' or j[1] == 'scale' or j[1] == 't0':
                     pos[i, j[0]] = initial[j[0]][1] + scales[j[1]] * sp.random.randn(1)
                 else:
@@ -748,37 +697,37 @@ class BatSignal:
                 scales['inc'] = 10.
                 if isinstance(noprior, (list, tuple)):
                     for v in noprior:
-                        idx = [i for i, x in enumerate(initnames) if x == v]
+                        idx = [i for i, x in enumerate(self.initnames) if x == v]
                         for m in idx:
                             pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
                 else:
-                    idx = [i for i, x in enumerate(initnames) if x == noprior]
+                    idx = [i for i, x in enumerate(self.initnames) if x == noprior]
                     for m in idx:
                         pos[i, m] = initial[m][1] + scales[noprior] * sp.random.randn(1)
 
             if 'uniform' in locals():
                 if isinstance(uniform, (list, tuple)):
                     for v in uniform:
-                        idx = [i for i, x in enumerate(initnames) if x == v]
+                        idx = [i for i, x in enumerate(self.initnames) if x == v]
                         for m in idx:
                             pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
                 else:
-                    idx = [i for i, x in enumerate(initnames) if x == uniform]
+                    idx = [i for i, x in enumerate(self.initnames) if x == uniform]
                     for m in idx:
                         pos[i, m] = initial[m][1] + scales[uniform] * sp.random.randn(1)
 
             if 'gaussian' in locals():
                 if isinstance(gaussian, (list, tuple)):
                     for v in gaussian:
-                        idx = [i for i, x in enumerate(initnames) if x == v]
+                        idx = [i for i, x in enumerate(self.initnames) if x == v]
                         for m in idx:
                             pos[i, m] = sp.random.normal(initial[m][1], scales[v])
                 else:
-                    idx = [i for i, x in enumerate(initnames) if x == gaussian]
+                    idx = [i for i, x in enumerate(self.initnames) if x == gaussian]
                     for m in idx:
                         pos[i, m] = sp.random.normal(initial[m][1], scales[gaussian])
 
-        dimensions = len(initnames)
+        dimensions = len(self.initnames)
 
         # Set-up Recovery File
         filename = self.planet + "_backend.h5"
@@ -789,13 +738,17 @@ class BatSignal:
         else:
             backend.reset(nwalkers, dimensions)
 
-        sampler = emcee.EnsembleSampler(nwalkers, dimensions, lnprob, args=(self._inputs, self._datadict, initial,
-                                                                            self.sigmas, self._usr_change,
-                                                                            self._multi), backend=backend)
+        variables = [x for x in self._usr_in]
+        variables.insert(0, 0.06)
+        variables.insert(1, 0.8)
+        variables.append(self.limb_dark_law)
+        variables.append(self._ldlength)
+
+        sampler = emcee.EnsembleSampler(nwalkers, dimensions, lnprob, args=(self._datadict, variables, self.sigmas,
+                                                                            self._multi_lc), backend=backend)
 
         max_n = 3000
-
-        # We'll track how the average autocorrelation time estimate changes
+        #convergence things
         index = 0
         autocorr = np.empty(max_n)
         np.warnings.filterwarnings('ignore')
@@ -921,7 +874,7 @@ class BatSignal:
                 kernel = amp * george.kernels.Matern52Kernel(scale)
                 gp = george.GP(kernel)
                 gp.compute(date, error)
-                model = run_batman(self._inputs, zip(names, v), names, date, self._usr_change)
+                model = run_batman(self._inputs, zip(names, v))
                 m = gp.sample_conditional(flux - model, date) + model
                 ms.append(m)
 
