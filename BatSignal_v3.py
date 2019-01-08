@@ -153,6 +153,13 @@ def lnprior(variables, sigmas):
                     else:
                         val = -sp.inf
                     value.append(val)
+                elif s[0] == 't0' and not isinstance(variables['usr'][4], float):
+                    num = int(key[7:])
+                    if variables['usr'][i][num] - 3 * s[1] < variables[key][i] < variables['usr'][i][num] + 3 * s[1]:
+                        val = val - (variables[key][i] - variables['usr'][i][num]) ** 2 / (2 * (s[1] ** 2))
+                    else:
+                        val = -sp.inf
+                    value.append(val)
                 else:
                     if isinstance(s[1], float):
                         if variables['usr'][i] - 3 * s[1] < variables[key][i] < variables['usr'][i] + 3 * s[1]:
@@ -454,7 +461,10 @@ class BatSignal:
                 for key in sorted(self._datadict.keys()):
                     self.t0s[key] = compute_tzero(self._datadict[key][0], self._datadict[key][1])
         else:
-            self.t0s['transit0'] = self._usr_in[2]
+            count = 0
+            for key in sorted(self._datadict.keys()):
+                self.t0s[key] = self._usr_in[2][count]
+                count += 1
 
         # Determines which parameters the user would like to fit
         section = config.sections()[0]
