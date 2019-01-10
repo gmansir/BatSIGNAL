@@ -775,21 +775,16 @@ class BatSignal:
         :return: Synthetic light curve saved in a file called "testcurve.txt" in pwd
         """
 
-        inputs.rp = self._usr_in[0]
-        inputs.limb_dark = "quadratic"
-        inputs.u = self._usr_in[1]
-        inputs.t0 = np.median(self.date)
-        inputs.per = self._usr_in[3]
-        inputs.a = self._usr_in[4]
-        inputs.inc = self._usr_in[5]
-        inputs.ecc = self._usr_in[6]
-        inputs.w = self._usr_in[7]
+        variables = self._usr_in
+        if isinstance(self._usr_in[2], float)
+            pass
+        else:
+            variables[2] = self._usr_in[2][0]
 
-        bats = batman.TransitModel(inputs, self.date)
-        model = bats.light_curve(inputs)
+        run_batman(variables, self._datadict['transit0'][0], self.all_param_names[2:])
 
         sigma = 0.0008
-        n = len(self.date)
+        n = len(self._datadict['transit0'][0])
         if n % 2 != 0:
             m = n + 1
         else:
@@ -809,7 +804,7 @@ class BatSignal:
 
             noise_model = model + noise + red
 
-            sp.savetxt('whitetest' + str(i) + '.txt', zip(self.date, noise_model, noise+red))
+            sp.savetxt('whitetest' + str(i) + '.txt', zip(self._datadict['transit0'][0], noise_model, noise+red))
 
         return self
 
@@ -989,7 +984,7 @@ class BatSignal:
         :return: Saves figure as "chain.png" in current working directory.
         """
 
-        samples = self._samples
+        samples = self._sampler
         n = int(len(self.names_change) / 2)
         remainder = len(self.names_change) % 2
         count = 2
@@ -1030,7 +1025,7 @@ class BatSignal:
 
         variables = self.variables[:]
         names = self.names_change[:]
-        samples = self._samples
+        samples = self._sampler
 
         variables.insert(0, -5)
         variables.insert(1, -2)
