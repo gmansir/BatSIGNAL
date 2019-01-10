@@ -115,6 +115,14 @@ def together_limbdark(variables, length):
 
 
 def run_batman(variables, date_real, names):
+    """
+    Uses a set of input variables to create a model with batman.
+
+    :param variables: list of variables required for batman, also including the amplitude and scale values for gp
+    :param date_real: the date column from the data
+    :param names: a list of the names of variables required for batman, including amplitude and scale
+    :return: a batman transit model interpolated to the dates of the original data
+    """
 
     date = np.linspace(date_real[0], date_real[-1], len(date_real))
 
@@ -125,7 +133,10 @@ def run_batman(variables, date_real, names):
     bats = batman.TransitModel(batinputs, date)
     model = bats.light_curve(batinputs)
 
-    return model
+    tck = interpolate.splrep(date, model, s=0)
+    model_real_times = interpolate.splev(date_real, tck, der=0)
+
+    return model_real_times
 
 
 def lnprior(variables, sigmas):
@@ -156,7 +167,14 @@ def lnprior(variables, sigmas):
                 elif s[0] == 't0' and not isinstance(variables['usr'][4], float):
                     num = int(key[7:])
                     if variables['usr'][i][num] - 3 * s[1] < variables[key][i] < variables['usr'][i][num] + 3 * s[1]:
-                        val = val - (variables[key][i] - variables['usr'][i][num]) ** 2 / (2 * (s[1] ** 2))
+                        val = val - np.sqrt(((variables[key][i] - variables['usr'][i][num]) ** 2))
+                    else:
+                        val = -sp.inf
+                    value.append(val)
+                elif s[0] == 't0' and isinstance(variables['usr'][4], float):
+                    num = int(key[7:])
+                    if variables['usr'][i] - 3 * s[1] < variables[key][i] < variables['usr'][i] + 3 * s[1]:
+                        val = val - np.sqrt(((variables[key][i] - variables['usr'][i]) ** 2))
                     else:
                         val = -sp.inf
                     value.append(val)
@@ -202,21 +220,17 @@ def lnlike(variables, datadict, names):
     for i in range(len(datadict.keys())):
 
         key = 'transit' + str(i)
-        date = datadict[key][3]
         date_real = datadict[key][0]
         flux = datadict[key][1]
         error = datadict[key][2]
 
         model = run_batman(variables[key], date_real, names)
 
-        tck = interpolate.splrep(date, model, s=0)
-        model_real_times = interpolate.splev(date_real, tck, der=0)
-
         kernel = variables[key][0] * george.kernels.Matern52Kernel(variables[key][1])
         gp = george.GP(kernel)
         gp.compute(date_real, error)
 
-        val += gp.lnlikelihood(flux - model_real_times)
+        val += gp.lnlikelihood(flux - model)
 
     return val
 
@@ -404,19 +418,12 @@ class BatSignal:
             for i in range(len(light_curve_file)):
                 n = 'transit' + str(i)
                 self._datadict[n] = sp.loadtxt(light_curve_file[i], unpack=True)
-                col = np.linspace(self._datadict[n][0][0], self._datadict[n][0][-1], len(self._datadict[n][0]))
-                col = col.reshape(1, np.shape(col)[0])
-                self._datadict[n] = np.concatenate([self._datadict[n], col])
         elif isinstance(light_curve_file, str):
             self._datadict['transit0'] = sp.loadtxt(light_curve_file, unpack=True)
-            col = np.linspace(self._datadict['transit0'][0][0], self._datadict['transit0'][0][-1],
-                              len(self._datadict['transit0'][0]))
-            col = col.reshape(1, np.shape(col)[0])
-            self._datadict['transit0'] = np.concatenate([self._datadict['transit0'], col])
         else:
             raise TypeError('The light curve file should be either a string or list')
         for key in self._datadict.keys():
-            if len(self._datadict[key]) != 4:
+            if len(self._datadict[key]) != 3:
                 raise ValueError("The input file should contain a column with the Julian date,"
                                  "a column of data, and an error column only.")
 
@@ -618,10 +625,6 @@ class BatSignal:
                 self._usr_err[0] = value
             elif key == "err_scale":
                 self._usr_err[1] = value
-            elif key == 'uniform':
-                uniform = value
-            elif key == 'gaussian' or key == 'normal':
-                gaussian = value
             else:
                 pass
 
@@ -638,7 +641,6 @@ class BatSignal:
         nwalkers = len(self.initnames) * 10
 
         self.variables, _ = separate_limbdark(self.variables)
-        ndim = len(self.variables)
 
         pos = np.zeros([nwalkers, len(self.initnames)])
         scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 't0', 'ecc', 'w'], 1e-2)
@@ -650,43 +652,6 @@ class BatSignal:
                     pos[i, j[0]] = initial[j[0]][1] + scales[j[1]] * sp.random.randn(1)
                 else:
                     pos[i, j[0]] = sp.random.normal(initial[j[0]][1], scales[j[1]])
-
-            if 'noprior' in locals():
-                scales = dict.fromkeys(['amp', 'scale', 'rp', 'per', 'a', 'ecc', 'w'], 1.)
-                scales['t0'] = 0.1
-                scales['u'] = 1e-2
-                scales['inc'] = 10.
-                if isinstance(noprior, (list, tuple)):
-                    for v in noprior:
-                        idx = [i for i, x in enumerate(self.initnames) if x == v]
-                        for m in idx:
-                            pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
-                else:
-                    idx = [i for i, x in enumerate(self.initnames) if x == noprior]
-                    for m in idx:
-                        pos[i, m] = initial[m][1] + scales[noprior] * sp.random.randn(1)
-
-            if 'uniform' in locals():
-                if isinstance(uniform, (list, tuple)):
-                    for v in uniform:
-                        idx = [i for i, x in enumerate(self.initnames) if x == v]
-                        for m in idx:
-                            pos[i, m] = initial[m][1] + scales[v] * sp.random.randn(1)
-                else:
-                    idx = [i for i, x in enumerate(self.initnames) if x == uniform]
-                    for m in idx:
-                        pos[i, m] = initial[m][1] + scales[uniform] * sp.random.randn(1)
-
-            if 'gaussian' in locals():
-                if isinstance(gaussian, (list, tuple)):
-                    for v in gaussian:
-                        idx = [i for i, x in enumerate(self.initnames) if x == v]
-                        for m in idx:
-                            pos[i, m] = sp.random.normal(initial[m][1], scales[v])
-                else:
-                    idx = [i for i, x in enumerate(self.initnames) if x == gaussian]
-                    for m in idx:
-                        pos[i, m] = sp.random.normal(initial[m][1], scales[gaussian])
 
         dimensions = len(self.initnames)
 
@@ -747,6 +712,10 @@ class BatSignal:
             sample_size = 1000
 
         ms = dict.fromkeys(self._datadict.keys(), list())
+        for key in ms.keys():
+            ms[key] = np.ones(len(self._datadict[key][0]))
+            ms[key] = ms[key].reshape(1, np.shape(ms[key])[0])
+
         vardict = {x: variables[:-1] for x in self._datadict.keys()}
         for s in tqdm(samples[np.random.randint(len(samples), size=sample_size)]):
 
@@ -762,17 +731,18 @@ class BatSignal:
                     else:
                         pass
 
+
                 kernel = amp * george.kernels.Matern52Kernel(scale)
                 gp = george.GP(kernel)
                 gp.compute(self._datadict[key][0], self._datadict[key][2])
                 model = run_batman(vardict[key], self._datadict[key][0], self.all_param_names)
-                m = gp.sample_conditional(self._datadict[key][1] - model, self._datadict[key][3]) + model
-                ms[key].append([m])
+                m = gp.sample_conditional(self._datadict[key][1] - model, self._datadict[key][0]) + model
+                m = m.reshape(1, np.shape(m)[0])
+                ms[key] = np.concatenate([ms[key], m])
 
-        for key in vardict.keys():
-            arr = list()
-            arr.append([x[0] for x in ms[key]])
-            ms[key] = np.array(arr[0]).transpose(1,0)
+        for key in ms.keys():
+            ms[key] = ms[key][1:]
+            ms[key] = np.transpose(ms[key], (1,0))
 
             avg = list()
             stdv = list()
@@ -965,26 +935,49 @@ class BatSignal:
 
     def plot_model(self):
 
-        fig, ax = plt.subplots(len(self._datadict.keys()), 2)
+        if len(self._datadict.keys()) == 1:
+            key = 'transit0'
+            low = self._datadict[key][3] - self._datadict[key][4]
+            high = self._datadict[key][3] + self._datadict[key][4]
+            res = self._datadict[key][1] - self._datadict[key][3]
 
-        for i in range(len(self._datadict.keys())):
-            key = 'transit' + str(i)
-            shift = self.t0s[key] - self.t0s['transit0']
-            low = self._datadict[key][4] - self._datadict[key][5]
-            high = self._datadict[key][4] - self._datadict[key][5]
-            res = self._datadict[key][1] - self._datadict[key][4]
+            fig, (plt1, plt2) = plt.subplots(2, 1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
+            fig.subplots_adjust(hspace=0)
 
-            _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][1], 'o', c='#4bd8ce', alpha=0.5)
-            _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][4], c='#5d1591')
-            _ = ax[i][0].fill_between(self._datadict[key][0] + shift, high, low, alpha=0.4, edgecolor='#7619b8',
-                                      facecolor='#ae64e3')
-            _ = ax[i][1].plot(self._datadict[key][0] + shift, res, 'o', c='#5d1591')
-            ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
-            yticks = ax[i][0].yaxis.get_major_ticks()
+            plt1.plot(self._datadict[key][0], self._datadict[key][3], c='#5d1591')
+            plt1.fill_between(self._datadict[key][0], high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
+            plt1.plot(self._datadict[key][0], self._datadict[key][1], 'o', c='#4bd8ce')
+
+            plt2.plot(self._datadict[key][0], res, 'o', c='#5d1591')
+            plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
+            yticks = plt2.yaxis.get_major_ticks()
             yticks[-1].label1.set_visible(False)
-            ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
-            yticks = ax[i][1].yaxis.get_major_ticks()
-            yticks[-1].label1.set_visible(False)
+
+            fig.suptitle('BatSignal Output')
+            plt2.set_xlabel('Julian Days')
+            plt1.set_ylabel('Relative Flux')
+
+        else:
+            fig, ax = plt.subplots(len(self._datadict.keys()), 2)
+            for i in range(len(self._datadict.keys())):
+                key = 'transit' + str(i)
+                shift = self.t0s[key] - self.t0s['transit0']
+                low = self._datadict[key][3] - self._datadict[key][4]
+                high = self._datadict[key][3] + self._datadict[key][4]
+                res = self._datadict[key][1] - self._datadict[key][3]
+
+                _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][1], 'o', c='#4bd8ce', alpha=0.5)
+                _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][3], c='#5d1591')
+                _ = ax[i][0].fill_between(self._datadict[key][0] + shift, high, low, alpha=0.4, edgecolor='#7619b8',
+                                          facecolor='#ae64e3')
+
+                _ = ax[i][1].plot(self._datadict[key][0] + shift, res, 'o', c='#5d1591')
+                ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                yticks = ax[i][0].yaxis.get_major_ticks()
+                yticks[-1].label1.set_visible(False)
+                ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                yticks = ax[i][1].yaxis.get_major_ticks()
+                yticks[-1].label1.set_visible(False)
 
         plt.savefig(self.planet + "_model.png")
         plt.show()
