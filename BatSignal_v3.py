@@ -15,6 +15,7 @@ from itertools import chain
 
 config = configparser.RawConfigParser()
 
+
 def create_param_file(newfile=''):
     """
     Creates a blank parameter file for the user to fill.
@@ -696,12 +697,12 @@ class BatSignal:
                 break
             old_tau = tau
 
+        self._sampler = sampler
         samples = sampler.get_chain(discard=100, thin=15, flat=True)
 
         self._output = list(map(lambda b: (b[1], b[1] - b[0], b[2] - b[1]),
                                 zip(*np.percentile(samples, [16, 50, 84], axis=0))))
 
-        self._usr_in = together_limbdark(self._usr_in, self._ldlength)
         self.results = np.zeros(len(self.initnames)).tolist()
         for i in range(len(self.initnames)):
             self.results[i] = [self.initnames[i], self._output[i][0], self._output[i][1], self._output[i][2]]
@@ -775,36 +776,48 @@ class BatSignal:
         :return: Synthetic light curve saved in a file called "testcurve.txt" in pwd
         """
 
-        variables = self._usr_in
-        if isinstance(self._usr_in[2], float)
+        variables = [x for x in self._usr_in]
+        if isinstance(self._usr_in[2], float):
             pass
         else:
             variables[2] = self._usr_in[2][0]
 
-        run_batman(variables, self._datadict['transit0'][0], self.all_param_names[2:])
+        variables.append(self.limb_dark_law)
 
-        sigma = 0.0008
+        sigma = 0.0001
         n = len(self._datadict['transit0'][0])
         if n % 2 != 0:
             m = n + 1
         else:
             m = n
 
-        for i in range(2):
-            noise = sigma * sp.random.standard_normal(m)
-            red = np.fft.fft(noise)
+        limb_darks = [0.15, 0.35, 0.55, 0.75]
+        semis = [4.5, 6.0, 7.5]
 
-            numu = m/2 + 1
-            k = np.linspace(1, numu, numu)
+        for l in limb_darks:
+            variables[1] = [l]
 
-            red = (red[:numu]/k).tolist()
-            conj = (red[1:-1].conjugate()).tolist()
-            red = red + conj
-            red = np.real(np.fft.ifft(red))
+            for s in semis:
+                variables[4] = s
 
-            noise_model = model + noise + red
+                model = run_batman(variables, self._datadict['transit0'][0], self.all_param_names[2:])
 
-            sp.savetxt('whitetest' + str(i) + '.txt', zip(self._datadict['transit0'][0], noise_model, noise+red))
+                for i in range(1):
+                    noise = sigma * sp.random.standard_normal(m)
+                    red = np.fft.fft(noise)
+
+                    numu = m/2 + 1
+                    k = np.linspace(1, numu, numu)
+
+                    red = (red[:numu]/k)
+                    conj = (red[1:-1].conjugate())
+                    red = red.tolist() + conj.tolist()
+                    red = np.real(np.fft.ifft(red))
+
+                    noise_model = model + noise + red
+
+                    sp.savetxt('roundwidth' + str(l)[2:] + '_' + str(s)[0] + str(s)[2] + '.txt',
+                                zip(self._datadict['transit0'][0], noise_model, noise+red))
 
         return self
 
@@ -928,54 +941,91 @@ class BatSignal:
 
         self.__init__(self.input_param_file, self.light_curve_file, self.planet)
 
-    def plot_model(self):
+    def plot_model(self, *args):
 
-        if len(self._datadict.keys()) == 1:
-            key = 'transit0'
-            low = self._datadict[key][3] - self._datadict[key][4]
-            high = self._datadict[key][3] + self._datadict[key][4]
-            res = self._datadict[key][1] - self._datadict[key][3]
+        if 'paper ready' in args:
+            alldates = []
+            allflux = []
+            allmodels = []
+            offset = 0
 
-            fig, (plt1, plt2) = plt.subplots(2, 1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
-            fig.subplots_adjust(hspace=0)
+            for curve in sorted(self._datadict.keys()):
+                low = self._datadict[curve][3] - self._datadict[curve][4]
+                high = self._datadict[curve][3] + self._datadict[curve][4]
+                res = self._datadict[curve][1] - self._datadict[curve][3]
+                date = self._datadict[curve][0]
+                flux = self._datadict[curve][1]
+                model = self._datadict[curve][3]
 
-            plt1.plot(self._datadict[key][0], self._datadict[key][3], c='#5d1591')
-            plt1.fill_between(self._datadict[key][0], high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
-            plt1.plot(self._datadict[key][0], self._datadict[key][1], 'o', c='#4bd8ce')
+                if curve == 'transit0':
+                    median = self.t0s[curve]
 
-            plt2.plot(self._datadict[key][0], res, 'o', c='#5d1591')
-            plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
-            yticks = plt2.yaxis.get_major_ticks()
-            yticks[-1].label1.set_visible(False)
+                diff = self.t0s[curve] - median
+                date -= diff
 
-            fig.suptitle('BatSignal Output')
-            plt2.set_xlabel('Julian Days')
-            plt1.set_ylabel('Relative Flux')
+                alldates.append(date)
+                allflux.append(flux + offset)
+                allmodels.append(model + offset)
+                offset += 0.06
+
+            for i in range(len(self._datadict.keys())):
+                plt.plot(alldates[i], allflux[i], 'o', c='black')
+                plt.plot(alldates[i], allmodels[i], c='red')
+
+            plt.title('BatSignal Output')
+            plt.xlabel('Phase')
+            plt.ylabel('Relative Flux')
+            plt.savefig(self.planet + "_paperready.png")
+            plt.show()
 
         else:
-            fig, ax = plt.subplots(len(self._datadict.keys()), 2)
-            for i in range(len(self._datadict.keys())):
-                key = 'transit' + str(i)
-                shift = self.t0s[key] - self.t0s['transit0']
+
+            if len(self._datadict.keys()) == 1:
+                key = 'transit0'
                 low = self._datadict[key][3] - self._datadict[key][4]
                 high = self._datadict[key][3] + self._datadict[key][4]
                 res = self._datadict[key][1] - self._datadict[key][3]
 
-                _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][1], 'o', c='#4bd8ce', alpha=0.5)
-                _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][3], c='#5d1591')
-                _ = ax[i][0].fill_between(self._datadict[key][0] + shift, high, low, alpha=0.4, edgecolor='#7619b8',
+                fig, (plt1, plt2) = plt.subplots(2, 1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
+                fig.subplots_adjust(hspace=0)
+
+                plt1.plot(self._datadict[key][0], self._datadict[key][1], 'o', c='#4bd8ce')
+                plt1.plot(self._datadict[key][0], self._datadict[key][3], c='#5d1591')
+                plt1.fill_between(self._datadict[key][0], high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
+
+                plt2.plot(self._datadict[key][0], res, 'o', c='#5d1591')
+                plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
+                yticks = plt2.yaxis.get_major_ticks()
+                yticks[-1].label1.set_visible(False)
+
+                fig.suptitle('BatSignal Output')
+                plt2.set_xlabel('Julian Days')
+                plt1.set_ylabel('Relative Flux')
+
+            else:
+                fig, ax = plt.subplots(len(self._datadict.keys()), 2)
+                for i in range(len(self._datadict.keys())):
+                    key = 'transit' + str(i)
+                    shift = self.t0s[key] - self.t0s['transit0']
+                    low = self._datadict[key][3] - self._datadict[key][4]
+                    high = self._datadict[key][3] + self._datadict[key][4]
+                    res = self._datadict[key][1] - self._datadict[key][3]
+
+                    _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][1], 'o', c='#4bd8ce', alpha=0.5)
+                    _ = ax[i][0].plot(self._datadict[key][0] + shift, self._datadict[key][3], c='#5d1591')
+                    _ = ax[i][0].fill_between(self._datadict[key][0] + shift, high, low, alpha=0.4, edgecolor='#7619b8',
                                           facecolor='#ae64e3')
 
-                _ = ax[i][1].plot(self._datadict[key][0] + shift, res, 'o', c='#5d1591')
-                ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
-                yticks = ax[i][0].yaxis.get_major_ticks()
-                yticks[-1].label1.set_visible(False)
-                ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
-                yticks = ax[i][1].yaxis.get_major_ticks()
-                yticks[-1].label1.set_visible(False)
+                    _ = ax[i][1].plot(self._datadict[key][0] + shift, res, 'o', c='#5d1591')
+                    ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[i][0].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
+                    ax[i][1].yaxis.set_major_locator(plt.MaxNLocator(5))
+                    yticks = ax[i][1].yaxis.get_major_ticks()
+                    yticks[-1].label1.set_visible(False)
 
-        plt.savefig(self.planet + "_model.png")
-        plt.show()
+            plt.savefig(self.planet + "_model.png")
+            plt.show()
 
     def plot_walkers(self):
         """
@@ -984,7 +1034,6 @@ class BatSignal:
         :return: Saves figure as "chain.png" in current working directory.
         """
 
-        samples = self._sampler
         n = int(len(self.names_change) / 2)
         remainder = len(self.names_change) % 2
         count = 2
@@ -994,21 +1043,21 @@ class BatSignal:
         else:
             f, ax = plt.subplots(n + 2, 2)
 
-        _ = ax[0][0].plot(np.swapaxes(samples[:, 0], 0, 1))
+        _ = ax[0][0].plot(np.swapaxes(self._sampler[:, 0], 0, 1))
         ax[0][0].set_title('amp')
-        _ = ax[0][1].plot(np.swapaxes(samples[:, 1], 0, 1))
+        _ = ax[0][1].plot(np.swapaxes(self._sampler[:, 1], 0, 1))
         ax[0][1].set_title('scale')
 
         for i in range(n):
-            _ = ax[i + 1][0].plot(np.swapaxes(samples[:, count], 0, 1))
+            _ = ax[i + 1][0].plot(np.swapaxes(self._sampler[:, count], 0, 1))
             ax[i + 1][0].set_title(self.names_change[count - 2])
             count += 1
-            _ = ax[i + 1][1].plot(np.swapaxes(samples[:, count], 0, 1))
+            _ = ax[i + 1][1].plot(np.swapaxes(self._sampler[:, count], 0, 1))
             ax[i + 1][1].set_title(self.names_change[count - 2])
             count += 1
 
         if remainder == 1:
-            _ = ax[n + 1][0].plot(np.swapaxes(samples[:, count], 0, 1))
+            _ = ax[n + 1][0].plot(np.swapaxes(self._sampler[:, count], 0, 1))
             ax[n + 1][0].set_title(self.names_change[count - 2])
         else:
             pass
