@@ -928,9 +928,9 @@ class BatSignal:
             fig, (plt1, plt2) = plt.subplots(2, 1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
             fig.subplots_adjust(hspace=0)
 
+            plt1.plot(self._datadict[key][0], self._datadict[key][1], 'o', c='#4bd8ce')
             plt1.plot(self._datadict[key][0], self._datadict[key][3], c='#5d1591')
             plt1.fill_between(self._datadict[key][0], high, low, alpha=0.3, edgecolor='#7619b8', facecolor='#ae64e3')
-            plt1.plot(self._datadict[key][0], self._datadict[key][1], 'o', c='#4bd8ce')
 
             plt2.plot(self._datadict[key][0], res, 'o', c='#5d1591')
             plt2.yaxis.set_major_locator(plt.MaxNLocator(3))
@@ -1011,17 +1011,10 @@ class BatSignal:
         :return: Saves figure as corner.png in current working directory
         """
 
-        variables = self.variables[:]
-        names = self.names_change[:]
+        names = self.initnames[:]
         samples = self._sampler
 
-        variables.insert(0, -5)
-        variables.insert(1, -2)
-
-        names.insert(0, 'amp')
-        names.insert(1, 'scale')
-
-        fig = corner.corner(samples, truths=variables, labels=names, quantiles=[0.16, 0.5, 0.84], show_titles=True)
+        fig = corner.corner(samples, titles=names, labels=names, quantiles=[0.16, 0.5, 0.84], show_titles=True)
         fig.set_size_inches(10, 10)
         fig.savefig("corner.png")
         plt.show()
